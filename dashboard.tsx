@@ -16,6 +16,7 @@ import {
   VolumeX,
   RepeatIcon as Record,
   Circle,
+  Brain,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -24,6 +25,17 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Sidebar, SidebarContent, SidebarHeader, SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
+import PersonDetectionOverlay from "@/components/person-detection-overlay"
+import WebcamDetection from "@/components/webcam-detection"
+import { SmartVideoDetection } from "@/components/smart-video-detection"
+
+// Declaración para YouTube API
+declare global {
+  interface Window {
+    YT: any;
+    onYouTubeIframeAPIReady: () => void;
+  }
+}
 
 interface Camera {
   id: string
@@ -36,6 +48,7 @@ interface Camera {
   alertLevel: "none" | "low" | "medium" | "high"
   resolution: string
   fps: number
+  streamUrl?: string
 }
 
 interface TrackingEvent {
@@ -50,16 +63,79 @@ interface TrackingEvent {
 }
 
 export default function CameraDashboard() {
+  // Estado para saber si estamos en el cliente
+  const [isClient, setIsClient] = useState(false);
+  const playerRef = useRef<any>(null);
+
+  useEffect(() => {
+    setIsClient(true);
+    // Cargar la API de YouTube
+    if (!window.YT) {
+      const tag = document.createElement('script');
+      tag.src = 'https://www.youtube.com/iframe_api';
+      const firstScriptTag = document.getElementsByTagName('script')[0];
+      firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
+    }
+  }, []);
+  // Estado para la hora actual (solo cliente)
+  const [currentTime, setCurrentTime] = useState<string>("");
+
+  useEffect(() => {
+    // Actualiza la hora cada segundo solo en el cliente
+    const updateTime = () => setCurrentTime(formatTimestamp(new Date()));
+    updateTime();
+    const interval = setInterval(updateTime, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Función para manejar el mute/unmute del player de YouTube
+  const handleMuteToggle = () => {
+    if (playerRef.current) {
+      if (isMuted) {
+        playerRef.current.unMute()
+      } else {
+        playerRef.current.mute()
+      }
+    }
+    setIsMuted(!isMuted)
+  }
+
+  // Función para inicializar el player de YouTube
+  const initializeYouTubePlayer = (videoId: string) => {
+    if (window.YT && window.YT.Player) {
+      playerRef.current = new window.YT.Player('youtube-player', {
+        videoId: videoId,
+        playerVars: {
+          autoplay: 1,
+          controls: 0,
+          disablekb: 1,
+          modestbranding: 1,
+          fs: 0,
+          mute: isMuted ? 1 : 0
+        },
+        events: {
+          onReady: (event: any) => {
+            if (isMuted) {
+              event.target.mute();
+            }
+          }
+        }
+      })
+    }
+  }
   const [selectedCameraId, setSelectedCameraId] = useState("1")
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [isMuted, setIsMuted] = useState(true)
+  const [isAIDetectionEnabled, setIsAIDetectionEnabled] = useState(true) // Habilitado por defecto
+  const [useWebcam, setUseWebcam] = useState(false)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
+  const videoElementRef = useRef<HTMLVideoElement | null>(null)
 
   const [cameras, setCameras] = useState<Camera[]>([
     {
       id: "1",
-      name: "Entrada Principal",
-      location: "Planta Baja - Lobby",
+      name: "Times Square",
+      location: "New York City - Manhattan",
       status: "online",
       isRecording: true,
       peopleDetected: 2,
@@ -67,168 +143,81 @@ export default function CameraDashboard() {
       alertLevel: "medium",
       resolution: "1920x1080",
       fps: 30,
+      // Enlace actualizado al nuevo directo de YouTube proporcionado
+      streamUrl: "https://www.youtube.com/embed/rnXIjl_Rzy4?autoplay=1",
     },
     {
       id: "2",
-      name: "Pasillo Norte",
-      location: "Primer Piso - Oficinas",
-      status: "online",
-      isRecording: true,
-      peopleDetected: 0,
-      lastMotion: new Date(Date.now() - 300000),
-      alertLevel: "none",
-      resolution: "1920x1080",
-      fps: 25,
-    },
-    {
-      id: "3",
-      name: "Sala de Reuniones",
-      location: "Segundo Piso - Sala A",
+      name: "Local Video Demo",
+      location: "Video Local - Detección AI",
       status: "online",
       isRecording: false,
-      peopleDetected: 5,
-      lastMotion: new Date(Date.now() - 10000),
-      alertLevel: "high",
-      resolution: "2560x1440",
-      fps: 30,
-    },
-    {
-      id: "4",
-      name: "Estacionamiento",
-      location: "Exterior - Zona A",
-      status: "offline",
-      isRecording: false,
       peopleDetected: 0,
-      lastMotion: null,
-      alertLevel: "none",
-      resolution: "1920x1080",
-      fps: 0,
-    },
-    {
-      id: "5",
-      name: "Cafetería",
-      location: "Planta Baja - Área Social",
-      status: "online",
-      isRecording: true,
-      peopleDetected: 3,
-      lastMotion: new Date(Date.now() - 60000),
-      alertLevel: "low",
-      resolution: "1920x1080",
-      fps: 30,
-    },
-    {
-      id: "6",
-      name: "Salida Emergencia",
-      location: "Planta Baja - Salida Este",
-      status: "maintenance",
-      isRecording: false,
-      peopleDetected: 0,
-      lastMotion: null,
+      lastMotion: new Date(Date.now() - 120000),
       alertLevel: "none",
       resolution: "1280x720",
-      fps: 0,
+      fps: 25,
+      // Video local para probar detección AI
+      streamUrl: "/v1.mp4",
     },
   ])
 
   const [trackingEvents, setTrackingEvents] = useState<TrackingEvent[]>([
     {
       id: "1",
-      cameraId: "3",
-      cameraName: "Sala de Reuniones",
-      type: "multiple_people",
+      cameraId: "1",
+      cameraName: "Times Square",
+      type: "person_entered",
       timestamp: new Date(Date.now() - 10000),
-      peopleCount: 5,
-      severity: "critical",
-      description: "5 personas detectadas simultáneamente en sala de reuniones",
+      peopleCount: 2,
+      severity: "info",
+      description: "2 people entered the viewing area",
     },
     {
       id: "2",
-      cameraId: "1",
-      cameraName: "Entrada Principal",
-      type: "person_entered",
-      timestamp: new Date(Date.now() - 30000),
-      peopleCount: 2,
+      cameraId: "2",
+      cameraName: "Local Video Demo",
+      type: "motion_detected",
+      timestamp: new Date(Date.now() - 15000),
+      peopleCount: 1,
       severity: "info",
-      description: "2 personas ingresaron al edificio",
+      description: "AI detection ready for local video analysis",
     },
     {
       id: "3",
-      cameraId: "5",
-      cameraName: "Cafetería",
+      cameraId: "1",
+      cameraName: "Times Square",
       type: "motion_detected",
-      timestamp: new Date(Date.now() - 60000),
-      peopleCount: 3,
+      timestamp: new Date(Date.now() - 30000),
+      peopleCount: 2,
       severity: "info",
-      description: "Movimiento detectado - 3 personas en área social",
+      description: "Motion detected in Times Square area",
+    },
+    {
+      id: "4",
+      cameraId: "2",
+      cameraName: "Local Video Demo",
+      type: "person_entered",
+      timestamp: new Date(Date.now() - 45000),
+      peopleCount: 1,
+      severity: "info",
+      description: "Local video loaded - AI detection available",
+    },
+    {
+      id: "5",
+      cameraId: "1",
+      cameraName: "Times Square",
+      type: "multiple_people",
+      timestamp: new Date(Date.now() - 60000),
+      peopleCount: 5,
+      severity: "warning",
+      description: "High pedestrian traffic detected",
     },
   ])
 
   const selectedCamera = cameras.find((c) => c.id === selectedCameraId)
 
-  // Simulación de actualizaciones en tiempo real
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setCameras((prev) =>
-        prev.map((camera) => {
-          if (camera.status === "online" && Math.random() > 0.8) {
-            const previousCount = camera.peopleDetected
-            const newPeopleCount = Math.floor(Math.random() * 6)
-            const newAlertLevel =
-              newPeopleCount === 0 ? "none" : newPeopleCount <= 2 ? "low" : newPeopleCount <= 4 ? "medium" : "high"
-
-            // Generar evento de tracking si hay cambios
-            if (newPeopleCount !== previousCount) {
-              let eventType: TrackingEvent["type"] = "motion_detected"
-              let severity: TrackingEvent["severity"] = "info"
-              let description = ""
-
-              if (newPeopleCount > previousCount) {
-                eventType = "person_entered"
-                description = `${newPeopleCount - previousCount} persona${newPeopleCount - previousCount !== 1 ? "s" : ""} ingresó${newPeopleCount - previousCount !== 1 ? "aron" : ""}`
-              } else if (newPeopleCount < previousCount) {
-                eventType = "person_exited"
-                description = `${previousCount - newPeopleCount} persona${previousCount - newPeopleCount !== 1 ? "s" : ""} salió${previousCount - newPeopleCount !== 1 ? "eron" : ""}`
-              }
-
-              if (newPeopleCount >= 4) {
-                eventType = "multiple_people"
-                severity = "critical"
-                description = `${newPeopleCount} personas detectadas simultáneamente`
-              } else if (newPeopleCount >= 2) {
-                severity = "warning"
-              }
-
-              if (newPeopleCount !== previousCount) {
-                const newEvent: TrackingEvent = {
-                  id: Date.now().toString(),
-                  cameraId: camera.id,
-                  cameraName: camera.name,
-                  type: eventType,
-                  timestamp: new Date(),
-                  peopleCount: newPeopleCount,
-                  severity,
-                  description:
-                    description ||
-                    `${newPeopleCount} persona${newPeopleCount !== 1 ? "s" : ""} detectada${newPeopleCount !== 1 ? "s" : ""}`,
-                }
-                setTrackingEvents((prev) => [newEvent, ...prev.slice(0, 49)])
-              }
-            }
-
-            return {
-              ...camera,
-              peopleDetected: newPeopleCount,
-              lastMotion: newPeopleCount > 0 ? new Date() : camera.lastMotion,
-              alertLevel: newAlertLevel,
-            }
-          }
-          return camera
-        }),
-      )
-    }, 4000)
-
-    return () => clearInterval(interval)
-  }, [])
+  // ...existing code...
 
   // Auto-scroll del log
   useEffect(() => {
@@ -283,7 +272,7 @@ export default function CameraDashboard() {
   }
 
   const formatTimeAgo = (date: Date | null) => {
-    if (!date) return "Nunca"
+    if (!date) return "Never"
     const seconds = Math.floor((Date.now() - date.getTime()) / 1000)
     if (seconds < 60) return `${seconds}s`
     const minutes = Math.floor(seconds / 60)
@@ -301,7 +290,7 @@ export default function CameraDashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-black text-white">
+    <div className="min-h-screen bg-black text-white overflow-hidden">
       <SidebarProvider>
         {/* Sidebar Izquierda - Lista de Cámaras */}
         <Sidebar className="border-r border-gray-800 bg-black" variant="sidebar" collapsible="none">
@@ -311,8 +300,8 @@ export default function CameraDashboard() {
                 <CameraIcon className="w-5 h-5 text-black" />
               </div>
               <div>
-                <h2 className="font-semibold text-white text-base">Security Hub</h2>
-                <p className="text-xs text-gray-400">Sistema de Monitoreo</p>
+                <h2 className="font-semibold text-white text-base">BoringHumanFlow</h2>
+                <p className="text-xs text-gray-400">Human Tracking System</p>
               </div>
             </div>
           </SidebarHeader>
@@ -321,7 +310,7 @@ export default function CameraDashboard() {
             <div className="p-4">
               <div className="mb-4">
                 <h3 className="text-gray-400 text-xs uppercase tracking-wider font-medium">
-                  Cámaras Activas ({cameras.filter((c) => c.status === "online").length})
+                  Active Cameras ({cameras.filter((c) => c.status === "online").length})
                 </h3>
               </div>
 
@@ -370,10 +359,10 @@ export default function CameraDashboard() {
                           </div>
                         )}
 
-                        {camera.status === "offline" && <div className="text-xs text-red-400">Sin conexión</div>}
+                        {camera.status === "offline" && <div className="text-xs text-red-400">No connection</div>}
 
                         {camera.status === "maintenance" && (
-                          <div className="text-xs text-yellow-400">Mantenimiento</div>
+                          <div className="text-xs text-yellow-400">Maintenance</div>
                         )}
                       </div>
                     </div>
@@ -384,10 +373,10 @@ export default function CameraDashboard() {
           </SidebarContent>
         </Sidebar>
 
-        <SidebarInset className="bg-black">
-          <div className="flex h-screen">
+        <SidebarInset className="bg-black overflow-hidden">
+          <div className="flex h-screen overflow-hidden">
             {/* Vista Principal de Cámara */}
-            <div className="flex-1 flex flex-col">
+            <div className="flex-1 flex flex-col overflow-hidden">
               {/* Header de la cámara principal */}
               <div className="border-b border-gray-800 p-4">
                 <div className="flex items-center justify-between">
@@ -420,12 +409,75 @@ export default function CameraDashboard() {
                     >
                       {selectedCamera?.alertLevel === "none" ? "Normal" : selectedCamera?.alertLevel?.toUpperCase()}
                     </Badge>
+                    
+                    {/* Indicador de tipo de stream y detección AI */}
+                    {selectedCamera?.streamUrl?.includes("youtube") && (
+                      <Badge 
+                        variant="secondary" 
+                        className={`${isAIDetectionEnabled 
+                          ? "bg-orange-500/20 text-orange-400 border-orange-500/50" 
+                          : "bg-blue-500/20 text-blue-400 border-blue-500/50"
+                        }`}
+                      >
+                        YouTube {isAIDetectionEnabled ? "• AI Limitado" : "• Solo Stream"}
+                      </Badge>
+                    )}
+                    
+                    {selectedCamera?.streamUrl && !selectedCamera.streamUrl.includes("youtube") && !useWebcam && (
+                      <Badge 
+                        variant="secondary" 
+                        className={`${isAIDetectionEnabled 
+                          ? "bg-green-500/20 text-green-400 border-green-500/50" 
+                          : "bg-gray-500/20 text-gray-400 border-gray-500/50"
+                        }`}
+                      >
+                        Video Local {isAIDetectionEnabled ? "• AI Disponible" : "• AI Deshabilitado"}
+                      </Badge>
+                    )}
+                    
+                    {useWebcam && (
+                      <Badge variant="secondary" className="bg-green-500/20 text-green-400 border-green-500/50">
+                        Webcam {isAIDetectionEnabled ? "• AI Activo" : ""}
+                      </Badge>
+                    )}
                   </div>
                   <div className="flex items-center space-x-2">
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => setIsMuted(!isMuted)}
+                      onClick={() => setUseWebcam(!useWebcam)}
+                      className={`hover:bg-gray-800 ${
+                        useWebcam 
+                          ? "text-green-400 hover:text-green-300" 
+                          : "text-gray-400 hover:text-white"
+                      }`}
+                      title={useWebcam ? "Cambiar a stream" : "Usar webcam"}
+                    >
+                      <CameraIcon className="w-4 h-4" />
+                      {useWebcam && (
+                        <div className="absolute -top-1 -right-1 w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                      )}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setIsAIDetectionEnabled(!isAIDetectionEnabled)}
+                      className={`hover:bg-gray-800 ${
+                        isAIDetectionEnabled 
+                          ? "text-blue-400 hover:text-blue-300" 
+                          : "text-gray-400 hover:text-white"
+                      }`}
+                      title={isAIDetectionEnabled ? "Desactivar detección AI" : "Activar detección AI"}
+                    >
+                      <Brain className="w-4 h-4" />
+                      {isAIDetectionEnabled && (
+                        <div className="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+                      )}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleMuteToggle}
                       className="text-gray-400 hover:text-white hover:bg-gray-800"
                     >
                       {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
@@ -456,11 +508,11 @@ export default function CameraDashboard() {
                       <DropdownMenuContent className="bg-gray-900 border-gray-700">
                         <DropdownMenuItem className="text-gray-300 hover:bg-gray-800">
                           <Settings className="w-4 h-4 mr-2" />
-                          Configurar Cámara
+                          Configure Camera
                         </DropdownMenuItem>
                         <DropdownMenuItem className="text-gray-300 hover:bg-gray-800">
                           <Eye className="w-4 h-4 mr-2" />
-                          Pantalla Completa
+                          Full Screen
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -473,115 +525,144 @@ export default function CameraDashboard() {
                   <span>•</span>
                   <span>{selectedCamera?.fps} FPS</span>
                   <span>•</span>
-                  <span>Última actividad: {formatTimeAgo(selectedCamera?.lastMotion)}</span>
+                  <span>Last activity: {formatTimeAgo(selectedCamera?.lastMotion ?? null)}</span>
                 </div>
               </div>
 
               {/* Vista de video principal */}
-              <div className="flex-1 p-4">
-                <div className="h-full bg-gray-900 rounded-lg relative overflow-hidden border border-gray-800">
-                  {selectedCamera?.status === "online" ? (
+              <div className="flex-1 p-4 overflow-hidden">
+                <div className="h-full bg-gray-900 rounded-lg relative overflow-hidden border border-gray-800 flex items-center justify-center">
+                  {useWebcam ? (
+                    <WebcamDetection
+                      isEnabled={isAIDetectionEnabled}
+                      onToggle={() => setIsAIDetectionEnabled(!isAIDetectionEnabled)}
+                      className="w-full h-full"
+                    />
+                  ) : (
                     <>
-                      <div className="absolute inset-0 bg-gradient-to-br from-gray-800 to-gray-900" />
-                      <div className="absolute top-4 left-4 flex items-center space-x-2">
-                        <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
-                        <span className="text-white text-sm font-medium">EN VIVO</span>
-                        <span className="text-gray-300 text-sm">{formatTimestamp(new Date())}</span>
-                      </div>
-                      {selectedCamera.peopleDetected > 0 && (
-                        <div className="absolute bottom-4 left-4 bg-red-600/90 backdrop-blur-sm text-white px-4 py-2 rounded-lg">
-                          <div className="flex items-center space-x-2">
-                            <Users className="w-5 h-5" />
-                            <span className="font-medium">
-                              {selectedCamera.peopleDetected} persona{selectedCamera.peopleDetected !== 1 ? "s" : ""}{" "}
-                              detectada{selectedCamera.peopleDetected !== 1 ? "s" : ""}
-                            </span>
+                      {selectedCamera?.status === "online" ? (
+                        selectedCamera?.streamUrl && isClient ? (
+                          <SmartVideoDetection
+                            streamUrl={selectedCamera.streamUrl}
+                            isAIDetectionEnabled={isAIDetectionEnabled}
+                            onToggle={() => setIsAIDetectionEnabled(!isAIDetectionEnabled)}
+                            onSwitchToWebcam={() => setUseWebcam(true)}
+                            className="w-full h-full"
+                          />
+                        ) : (
+                          <>
+                            <div className="absolute inset-0 bg-gradient-to-br from-gray-800 to-gray-900" />
+                            <div className="absolute top-4 left-4 flex items-center space-x-2">
+                              <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
+                              <span className="text-white text-sm font-medium">LIVE</span>
+                              <span className="text-gray-300 text-sm">{currentTime}</span>
+                              {isMuted && (
+                                <div className="flex items-center space-x-1 bg-black/50 backdrop-blur-sm px-2 py-1 rounded">
+                                  <VolumeX className="w-3 h-3 text-red-400" />
+                                  <span className="text-xs text-red-400">MUTED</span>
+                                </div>
+                              )}
+                            </div>
+                            {selectedCamera.peopleDetected > 0 && (
+                              <div className="absolute bottom-4 left-4 bg-red-600/90 backdrop-blur-sm text-white px-4 py-2 rounded-lg">
+                                <div className="flex items-center space-x-2">
+                                  <Users className="w-5 h-5" />
+                                  <span className="font-medium">
+                                    {selectedCamera.peopleDetected} person{selectedCamera.peopleDetected !== 1 ? "s" : ""}{" "}
+                                    detected
+                                  </span>
+                                </div>
+                              </div>
+                            )}
+                            <div className="absolute bottom-4 right-4 bg-black/50 backdrop-blur-sm text-white px-3 py-1 rounded text-sm">
+                              {selectedCamera.resolution} • {selectedCamera.fps}fps
+                            </div>
+                          </>
+                        )
+                      ) : selectedCamera?.status === "offline" ? (
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <div className="text-center text-gray-400">
+                            <EyeOff className="w-16 h-16 mx-auto mb-4" />
+                            <h3 className="text-xl font-medium mb-2">Camera Offline</h3>
+                            <p className="text-gray-500">The camera is not available at this time</p>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <div className="text-center text-yellow-400">
+                            <Settings className="w-16 h-16 mx-auto mb-4" />
+                            <h3 className="text-xl font-medium mb-2">Under Maintenance</h3>
+                            <p className="text-gray-500">The camera is being updated</p>
                           </div>
                         </div>
                       )}
-                      <div className="absolute bottom-4 right-4 bg-black/50 backdrop-blur-sm text-white px-3 py-1 rounded text-sm">
-                        {selectedCamera.resolution} • {selectedCamera.fps}fps
-                      </div>
                     </>
-                  ) : selectedCamera?.status === "offline" ? (
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="text-center text-gray-400">
-                        <EyeOff className="w-16 h-16 mx-auto mb-4" />
-                        <h3 className="text-xl font-medium mb-2">Cámara Sin Conexión</h3>
-                        <p className="text-gray-500">La cámara no está disponible en este momento</p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="text-center text-yellow-400">
-                        <Settings className="w-16 h-16 mx-auto mb-4" />
-                        <h3 className="text-xl font-medium mb-2">En Mantenimiento</h3>
-                        <p className="text-gray-500">La cámara está siendo actualizada</p>
-                      </div>
-                    </div>
                   )}
                 </div>
               </div>
             </div>
 
             {/* Panel Derecho - Log de Tracking */}
-            <div className="w-80 border-l border-gray-800 bg-gray-950 flex flex-col">
+            <div className="w-80 border-l border-gray-800 bg-gray-950 flex flex-col h-screen max-h-screen">
               <div className="border-b border-gray-800 p-4">
                 <div className="flex items-center justify-between">
-                  <h2 className="font-semibold text-white">Log de Actividad</h2>
+                  <h2 className="font-semibold text-white">Activity Log</h2>
                   <Badge variant="secondary" className="bg-blue-500/20 text-blue-400">
                     {trackingEvents.length}
                   </Badge>
                 </div>
-                <p className="text-xs text-gray-400 mt-1">Seguimiento en tiempo real</p>
+                <p className="text-xs text-gray-400 mt-1">Real-time tracking</p>
               </div>
 
-              <ScrollArea className="flex-1 p-4" ref={scrollAreaRef}>
-                <div className="space-y-3">
-                  {trackingEvents.map((event, index) => (
-                    <div key={event.id}>
-                      <div className="bg-gray-900/50 rounded-lg p-3 border border-gray-800">
-                        <div className="flex items-start justify-between mb-2">
-                          <div className="flex items-center space-x-2">
-                            <div
-                              className={`w-2 h-2 rounded-full ${getSeverityColor(event.severity).replace("text-", "bg-")}`}
-                            />
-                            <span className="text-sm font-medium text-white">{event.cameraName}</span>
-                          </div>
-                          <span className="text-xs text-gray-500">{formatTimestamp(event.timestamp)}</span>
-                        </div>
-                        <p className="text-sm text-gray-300 mb-2">{event.description}</p>
-                        <div className="flex items-center justify-between">
-                          <Badge
-                            variant="secondary"
-                            className={`text-xs ${
-                              event.severity === "critical"
-                                ? "bg-red-500/20 text-red-400"
-                                : event.severity === "warning"
-                                  ? "bg-yellow-500/20 text-yellow-400"
-                                  : "bg-blue-500/20 text-blue-400"
-                            }`}
-                          >
-                            {event.severity.toUpperCase()}
-                          </Badge>
-                          {event.peopleCount > 0 && (
-                            <div className="flex items-center space-x-1 text-xs text-gray-400">
-                              <Users className="w-3 h-3" />
-                              <span>{event.peopleCount}</span>
+              {/* ScrollArea con altura limitada y scroll vertical */}
+              <div className="flex-1 overflow-y-auto">
+                <ScrollArea className="h-full p-4" ref={scrollAreaRef}>
+                  <div className="space-y-3">
+                    {trackingEvents.map((event, index) => (
+                      <div key={event.id}>
+                        <div className="bg-gray-900/50 rounded-lg p-3 border border-gray-800">
+                          <div className="flex items-start justify-between mb-2">
+                            <div className="flex items-center space-x-2">
+                              <div
+                                className={`w-2 h-2 rounded-full ${getSeverityColor(event.severity).replace("text-", "bg-")}`}
+                              />
+                              <span className="text-sm font-medium text-white">{event.cameraName}</span>
                             </div>
-                          )}
+                            <span className="text-xs text-gray-500">{formatTimestamp(event.timestamp)}</span>
+                          </div>
+                          <p className="text-sm text-gray-300 mb-2">{event.description}</p>
+                          <div className="flex items-center justify-between">
+                            <Badge
+                              variant="secondary"
+                              className={`text-xs ${
+                                event.severity === "critical"
+                                  ? "bg-red-500/20 text-red-400"
+                                  : event.severity === "warning"
+                                    ? "bg-yellow-500/20 text-yellow-400"
+                                    : "bg-blue-500/20 text-blue-400"
+                              }`}
+                            >
+                              {event.severity.toUpperCase()}
+                            </Badge>
+                            {event.peopleCount > 0 && (
+                              <div className="flex items-center space-x-1 text-xs text-gray-400">
+                                <Users className="w-3 h-3" />
+                                <span>{event.peopleCount}</span>
+                              </div>
+                            )}
+                          </div>
                         </div>
+                        {index < trackingEvents.length - 1 && <Separator className="my-2 bg-gray-800" />}
                       </div>
-                      {index < trackingEvents.length - 1 && <Separator className="my-2 bg-gray-800" />}
-                    </div>
-                  ))}
-                </div>
-              </ScrollArea>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </div>
 
               <div className="border-t border-gray-800 p-4">
                 <Button className="w-full bg-white text-black hover:bg-gray-200">
                   <Plus className="w-4 h-4 mr-2" />
-                  Exportar Log
+                  Export Log
                 </Button>
               </div>
             </div>
